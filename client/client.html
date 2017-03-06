@@ -9,17 +9,21 @@
   let ctx;
   let canvas;
   let line = [];
+  let user;
   let linesToDraw = [];
   let socket;
   let drawer = false;
   let drawing = false;
+  let score = 0;
 
+
+ // ====== NON SERVER METHODS ====== //
   const draw = () => {
-    socket.emit('drawing-line', linesToDraw);
     ctx.strokeStyle = 'red';
     ctx.lineWidth = 3;
     ctx.beginPath();
 
+    // draws each line stored in linesToDraw
     for (let i = 0; i < linesToDraw.length; i++) {
       if (i === 0) {
         ctx.moveTo(linesToDraw[i].x, linesToDraw[i].y);
@@ -31,11 +35,16 @@
     ctx.closePath();
   };
 
+ /* This draw method is only called if a person joins later
+    and need to have canvas updated. Since linesToDraw is cleared after each
+    "drawn line", the server has a temp storage of all the past objects. 
+ */
   const updateDraw = () => {
     ctx.strokeStyle = 'red';
     ctx.lineWidth = 3;
     ctx.beginPath();
 
+    // loop through each object, and all the lines in the object
     for (let j = 0; j < line.length; j++) {
       let drawLines = line[j];
       for (let i = 0; i < drawLines.length; i++) {
@@ -45,34 +54,47 @@
           ctx.lineTo(drawLines[i].x, drawLines[i].y);
         }
       }
-       ctx.stroke();
+      ctx.stroke();
       ctx.closePath();
     }
   };
+
+// clears canvas when the drawer prompts it
+ const clearCanvas = () => {
+    linesToDraw = [];
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  };
+
+  const updateUserLabel = () => {
+      document.querySelector("#userLabel").innerHTML = "Username: " + user;
+      document.querySelector("#userLabel").innerHTML += "<br>Score: " + score;
+      document.querySelector("#wordHolder").innerHTML = "Guesser";
+  };
+
+// ====== SOCKET SERVER CODE =======
 
   const connectSocket = (e) => {
   let chat = document.querySelector("#chat");
   socket = io.connect(); 
     
-  socket.on('connect', () => {
-    console.log('connecting');
+    socket.on('connect', () => {
       
-    let user = document.querySelector("#username").value;
+    user = document.querySelector("#username").value;
       
-    if (!user) {
-      user = 'unknown';
-    }
+      if (!user) {
+        user = 'unknown';
+      }
       
-    document.querySelector("#userLabel").innerHTML = "Username: " + user;
+      updateUserLabel();
       
-    socket.emit('join', { name: user });
+      socket.emit('join', { name: user });
     
       // if user joins later
-    socket.on('updateCanvas', (data) => {
-      line = data;
-      updateDraw();
+      socket.on('updateCanvas', (data) => {
+        line = data;
+        updateDraw();
+      });
     });
-  });
     
   socket.on('msg', (data) => {
     console.log(data);
@@ -80,19 +102,50 @@
     
   // when the user click the send button,
   // message is sent to the server
-  const send = document.querySelector("#send"); send.addEventListener('click', () => {
-    console.log("send message");
+    const send = document.querySelector("#send"); 
+    send.addEventListener('click', () => {
     socket.emit('msgToServer', { msg: message.value });
     message.value = '';
+  });
+    
+  // when clicking on the clear button, sends signal to server
+  // which clears out the canvas of all the other users
+  const clear = document.querySelector('#clearButton');
+  clear.addEventListener('click', () => {
+    socket.emit('clearCanvas');
+    clearCanvas();
   });
     
   // message returned from server, update the chat window
   socket.on('chatWindow', (msg) => {
     chat.value += (`${msg}\n`);
   });
-    
+  
+  // upates who is gonna draw next, either retuns true or false
+  // if this client is not a drawer, then hide the clear button
+  // and change text above canvas
   socket.on('updateDrawer', (msg) => {
     drawer = msg;
+    if (!drawer) {
+      document.querySelector("#clearButton").style.display = "none";
+      document.querySelector("#wordHolder").innerHTML = "Guesser";
+    }
+    else {
+      document.querySelector("#clearButton").style.display = "block";
+    }
+  });
+    
+  // tells the client what word to draw
+  // highlight the word with another color
+  socket.on('updateWordToDraw', (data) => {
+    document.querySelector("#wordHolder").innerHTML = "Word to draw:";
+    document.querySelector("#wordHolder").innerHTML += "<h3><span style='color:orangered'>" + data + "</span></h3>";
+  });
+    
+    
+    // clears the canvas of the guessers, as prompted by the drawer
+    socket.on('clearCanvas', () => {
+    clearCanvas();
   });
           
     /* 
@@ -102,42 +155,73 @@
       chat.value += (`${msg}`);
     });
     
-    console.log(`User: ${drawer}`);
-      canvas.onmousedown = (e) => {
-        console.log(`mouseDown`);
+    
+    // ====== MOUSE EVENTS =========
+    canvas.onmousedown = (e) => {
         drawing = true;
       };
       canvas.onmouseup = (e) => {
-        console.log(`mouseUp`);
-        socket.emit('sendLinesStorage', linesToDraw);
-        linesToDraw = [];
-        drawing = false;
+        // only care if the person is the drawer
+        if (drawer) {
+          // sends the lines to be stored on server
+          socket.emit('sendLinesStorage', linesToDraw);
+          // clear array, the drawer let go of the mouse, so the object is finished
+          linesToDraw = [];
+          drawing = false;
+        }
       };
 
       canvas.onmousemove = (e) => {
-        console.log(`mouseMove`);
-        if (drawing) {
+        // if you are currently holding down the mouse, and you are the drawer
+        // then I care
+        if (drawing && drawer) {
           let rect = canvas.getBoundingClientRect();
           
+          // get more accurate position on canvas
           let position = {
             x: e.clientX - rect.left,
             y: e.clientY - rect.top
           };
+          
+          // push to array
           linesToDraw.push(position);
+          // send these lines to server, to be drawn on the 
+          // guessers canvas, broadcasted to all except the drawer
+          socket.emit('drawing-line', linesToDraw);
+          // draw self
           draw();
         }
-        
-        socket.on('drawing-line', (data) => {
+      };
+    
+    // here client guessers recieves the line data and draws them
+     socket.on('drawing-line', (data) => {
           linesToDraw = data;
           draw();
-          });
-    };
+      });
+    
+    // if you did a good job drawing and someone manage to guess correct
+    // then you ge some points
+    // and you are no longer a drawer, but guesser
+    socket.on('successfulDraw', () => {
+      score += 20;
+      updateUserLabel();
+    });
+
+    // if you guessed correct, you get point
+    // and the round is over, prompting the change of drawer
+    socket.on('wonRound', () => {
+      clearCanvas();
+      score += 50;
+      updateUserLabel();
+      socket.emit('roundOver');
+    });
   };
 
   const init = () => {
     canvas = document.querySelector("#canvas");
     ctx = canvas.getContext("2d");
     const connect = document.querySelector("#connect");
+    document.querySelector("#wordHolder").innerHTML = "Guesser";
     connect.addEventListener('click', () => {
       connect.style.display = "none";
       document.querySelector("#username").style.display = "none";
@@ -158,11 +242,8 @@
 </head>
 
 <body>
+  <h1>Let's Play Pictionary!</h1>
   <div id="wrapper">
-  <div id="canvasHolder">
-    <h2 id="drawer">Word to draw:</h2>
-    <canvas id="canvas" height="350" width="450">Please use an HTML 5 browser</canvas>
-  </div>
   <div id="chatHolder">
       <div id="userHolder">
   <label for="user" id="userLabel">Username:</label>
@@ -175,6 +256,11 @@
   <input id="message" name="message" type="text" />
   <input id="send" type="button" value="send" />
     </div>
+  </div>
+     <div id="canvasHolder">
+    <h2 id="wordHolder"></h2>
+    <canvas id="canvas" height="350" width="450">Please use an HTML 5 browser</canvas>
+    <input id="clearButton" type="button" value="Clear"/>
   </div>
   </div>
 </body>
