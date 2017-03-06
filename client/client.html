@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <link rel="stylesheet" type="text/css" href="/styles.css">
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-core/5.8.34/browser.min.js"></script>
+  <script type="text/babel">
+  let ctx;
+  let canvas;
+  let line = [];
+  let linesToDraw = [];
+  let socket;
+  let drawer = false;
+  let drawing = false;
+
+  const draw = () => {
+    socket.emit('drawing-line', linesToDraw);
+    ctx.strokeStyle = 'red';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+
+    for (let i = 0; i < linesToDraw.length; i++) {
+      if (i === 0) {
+        ctx.moveTo(linesToDraw[i].x, linesToDraw[i].y);
+      } else {
+        ctx.lineTo(linesToDraw[i].x, linesToDraw[i].y);
+      }
+    }
+    ctx.stroke();
+    ctx.closePath();
+  };
+
+  const updateDraw = () => {
+    ctx.strokeStyle = 'red';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+
+    for (let j = 0; j < line.length; j++) {
+      let drawLines = line[j];
+      for (let i = 0; i < drawLines.length; i++) {
+        if (i === 0) {
+          ctx.moveTo(drawLines[i].x, drawLines[i].y);
+        } else {
+          ctx.lineTo(drawLines[i].x, drawLines[i].y);
+        }
+      }
+       ctx.stroke();
+      ctx.closePath();
+    }
+  };
+
+  const connectSocket = (e) => {
+  let chat = document.querySelector("#chat");
+  socket = io.connect(); 
+    
+  socket.on('connect', () => {
+    console.log('connecting');
+      
+    let user = document.querySelector("#username").value;
+      
+    if (!user) {
+      user = 'unknown';
+    }
+      
+    document.querySelector("#userLabel").innerHTML = "Username: " + user;
+      
+    socket.emit('join', { name: user });
+    
+      // if user joins later
+    socket.on('updateCanvas', (data) => {
+      line = data;
+      updateDraw();
+    });
+  });
+    
+  socket.on('msg', (data) => {
+    console.log(data);
+  });
+    
+  // when the user click the send button,
+  // message is sent to the server
+  const send = document.querySelector("#send"); send.addEventListener('click', () => {
+    console.log("send message");
+    socket.emit('msgToServer', { msg: message.value });
+    message.value = '';
+  });
+    
+  // message returned from server, update the chat window
+  socket.on('chatWindow', (msg) => {
+    chat.value += (`${msg}\n`);
+  });
+    
+  socket.on('updateDrawer', (msg) => {
+    drawer = msg;
+  });
+          
+    /* 
+    when a new user enters the chat, the old chat log is returned from the server to update the chat log.
+    */
+    socket.on('updateChat', (msg) => {
+      chat.value += (`${msg}`);
+    });
+    
+    console.log(`User: ${drawer}`);
+      canvas.onmousedown = (e) => {
+        console.log(`mouseDown`);
+        drawing = true;
+      };
+      canvas.onmouseup = (e) => {
+        console.log(`mouseUp`);
+        socket.emit('sendLinesStorage', linesToDraw);
+        linesToDraw = [];
+        drawing = false;
+      };
+
+      canvas.onmousemove = (e) => {
+        console.log(`mouseMove`);
+        if (drawing) {
+          let rect = canvas.getBoundingClientRect();
+          
+          let position = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+          };
+          linesToDraw.push(position);
+          draw();
+        }
+        
+        socket.on('drawing-line', (data) => {
+          linesToDraw = data;
+          draw();
+          });
+    };
+  };
+
+  const init = () => {
+    canvas = document.querySelector("#canvas");
+    ctx = canvas.getContext("2d");
+    const connect = document.querySelector("#connect");
+    connect.addEventListener('click', () => {
+      connect.style.display = "none";
+      document.querySelector("#username").style.display = "none";
+      connectSocket();
+    });
+  }; 
+
+  window.onload = init;
+
+  </script>
+  <style>
+    textarea {
+      display: block;
+      background-color: #EEEEEE;
+    }
+
+  </style>
+</head>
+
+<body>
+  <div id="wrapper">
+  <div id="canvasHolder">
+    <h2 id="drawer">Word to draw:</h2>
+    <canvas id="canvas" height="350" width="450">Please use an HTML 5 browser</canvas>
+  </div>
+  <div id="chatHolder">
+      <div id="userHolder">
+  <label for="user" id="userLabel">Username:</label>
+  <input id="username" name="user" type="text" />
+  <input id="connect" type='button' value='connect' />
+    </div>
+  <textarea id="chat" rows="20" cols="40" readonly> </textarea>
+  <div id="messageHolder">
+  <label for="message">Message:</label>
+  <input id="message" name="message" type="text" />
+  <input id="send" type="button" value="send" />
+    </div>
+  </div>
+  </div>
+</body>
+
+</html>
